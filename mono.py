@@ -2,14 +2,18 @@ import operator
 import enchant
 import numpy as np
 import itertools
+import sys
+import time
+import threading
+from functools import partial
 
 en_dict = enchant.Dict("en_US")
-is_word_thr = 5 # len(char)/2 is correct
+is_word_thr = 3 # len(char)/is_word_thr is correct
 
 
-def freq(cypher_text):
+def freq(cipher_text):
     f = {}
-    for line in cypher_text:
+    for line in cipher_text:
         for char in line:
             if char not in f.keys():
                 f[char] = 1
@@ -18,27 +22,41 @@ def freq(cypher_text):
 
     return sorted(f.items(), key = lambda d:d[1])
 
-def check_syntax(text):
+def check_syntax_by_thread(text, word_len, correct_count):
+    for begin_char in range(2, len(text)-word_len):
+        word = text[begin_char:begin_char+word_len]
+        if en_dict[word_len-3].check(word) and len(word) > 1:
+            correct_count[word_len-3] += 1
+
+def check_syntax(text, is_word_thr=3):
     correct_count = 0
 
+    threads = []
     for word_len in range(3, 10):
+        # t = threading.Thread(target = check_syntax_by_thread, args=(text, word_len,correct_count))
+        # t.start()
+        # threads.append(t)
         for begin_char in range(2, len(text)-word_len):
             word = text[begin_char:begin_char+word_len]
             if en_dict.check(word) and len(word) > 1:
                 correct_count += 1
+    
+    #alive_array = [t.isAlive() for t in threads]
+    #while True in alive_array:
+    #    alive_array = [t.isAlive() for t in threads]
 
     if correct_count > len(text)/is_word_thr:
         return True
     else:
         return False
 
-def caesar(cypher_text):
-    max_char = max(freq(cypher_text).items(), key=operator.itemgetter(1))[0]
+def caesar(cipher_text):
+    max_char = max(freq(cipher_text).items(), key=operator.itemgetter(1))[0]
     
 #     if key == None:
 #         key = (ord('e')-ord(max_char))%26
 
-    line = cypher_text[0]
+    line = cipher_text[0]
     for key in range(1,26):
         new_line = ""
         for char in line:
@@ -49,7 +67,7 @@ def caesar(cypher_text):
 
     return False
 
-def playfair(cypher_text):
+def playfair(cipher_text):
     key = ""
 
     def gen_matrix(key):
@@ -126,28 +144,55 @@ def playfair(cypher_text):
     key = "monarchy"
     matrix = gen_matrix(key)
 
-    for line in cypher_text:
+    for line in cipher_text:
         plaintext = decrypt(line, matrix)
         if check_syntax(plaintext):
             return True
 
     return False
 
-def hill(cypher_text):
+def hill(cipher_text):
     pass
 
-def brute_force(cypher_text):
-    frequency = freq(cypher_text)
-    print(frequency)
-    e_map = max(freq(cypher_text), key= lambda d: d[1])[0]
+def map_known_mapping(cipher_text):
+    plain_key = "abcdefghijklmnopqrstuvwxyz"
+    cipher_key = "ahovcjqxelszgnubipwdkryfmt"
+    # cipher_key = "arizqhypgxofwnevmdulctkbsj"
 
-    ## find the most word in 2 char
-    ### concat to one string
+    ## mapping[cipher] = plaintext
+    ## generate mapping
+    mapping = {}
+    for cipher_char, plain_char in zip(cipher_key, plain_key):
+        mapping[cipher_char] = plain_char
+    
+    
+    def decode(text, mapping):
+        plaintext = ""
+        for char in text:
+            plaintext += mapping[char]
+
+        return plaintext
+
+    plaintexts = []
+    for ci in cipher_text:
+        plaintext = decode(ci, mapping)
+        plaintexts.append(plaintext.replace('\n',''))
+    
+    
+    return plaintexts
+
+
+
+def advanced_brute_force(cipher_text):
+    frequency = freq(cipher_text)
+    e_map = max(freq(cipher_text), key= lambda d: d[1])[0]
+
+    ## concat to one string
     one_string = ""
-    for line in cypher_text:
+    for line in cipher_text:
         one_string += line
 
-    ### find
+    ## find the most word in 2 char
     two_char_freq = {}
     for i in range(1,len(one_string)-1):
         two_char = one_string[i:i+2]
@@ -162,12 +207,11 @@ def brute_force(cypher_text):
             tmp_two_char_freq.pop(key)
 
     tmp_two_char_freq = sorted(tmp_two_char_freq.items(), key = lambda d:d[1])
-    print(tmp_two_char_freq)
     th_map = max(two_char_freq.items(), key=operator.itemgetter(1))[0]
     t_map = th_map[0]
     h_map = th_map[1]
 
-    ## find a mapping
+    ## find 'a' mapping
     frequency.reverse()
     a_map = ""
     for char in frequency:
@@ -176,23 +220,27 @@ def brute_force(cypher_text):
         else:
             a_map = char[0]
             break
-    
-    print(a_map)
-    ## mapping[cypher] = plaintext
-    ## plaintext: a, cyphertext: a_map
-    """
-    mapping = {a_map:'a', e_map:'e', h_map:'h', t_map:'t',
-            'd':'r', 'n':'n', 'g':'i', 'u':'s', 'j':'z',
-            'b':'x', 'm':'q', 'x':'j', 'o':'k', 's':'y',
-            't':'v', 'k':'w', 'r':'b', 'e':'o', 'v':'p',
-            'y':'g', 'h':'f', 'w':'m', 'c':'u', 'i':'c',
-            'z':'d', 'f':'l', 'd':'r', 'n':'n'}
-    """
+
+    ## find first group and second group
+    i = 0
+    first_group_map = ""
+    second_group_map = ""
+    for f in frequency:
+        if f[0] in [a_map, e_map, t_map, h_map]:
+            continue
+        else:
+            if i < 7:
+                first_group_map += f[0]
+            else:
+                second_group_map += f[0]
+            i += 1
+
+    ## mapping[cipher] = plaintext
+    ## plaintext: a, ciphertext: a_map
+    #  O, I, N, S, R, D, L : first group
+    #  C, U, M, W, F, G, Y, P, B, V, K, J, X, Q, Z: second group
+
     mapping = {a_map:'a', e_map:'e', h_map:'h', t_map:'t'}
-    remain_map_plaintext = "abcdefghijklmnopqrstuvwxyz".replace(a_map,'').replace(e_map, '').replace(h_map, '').replace(t_map, '')
-    # remain_map_plaintext = "abcefhijklmopqrstvwxyz".replace(a_map,'').replace(e_map, '').replace(h_map, '').replace(t_map, '')
-    remain_map_key = "bcdfgijklmnopqrsuvwxyz"
-    # remain_map_key = "bcfgjklmopqsuvwxyz"
 
     ## generate mapping
     
@@ -203,19 +251,44 @@ def brute_force(cypher_text):
 
         return plaintext
 
-
-    # print(cypher_text[2])
-    # print(decode(cypher_text[2], mapping))
-
-    for permutation in itertools.permutations(remain_map_key,len(remain_map_key)):
+    remain_map_key = first_group_map + second_group_map
+    second_group_plaintext = tuple("cumwfgypbvkjxqz")
+    
+    tmp_mapping = {}
+    for f_p in itertools.permutations("oinsrdl",7):
         ## compute mapping
-        for cypher_char, plain_char in zip(remain_map_plaintext, permutation):
-            mapping[cypher_char] = plain_char
+        for cipher_char, plain_char in zip(remain_map_key, f_p+second_group_plaintext):
+            tmp_mapping[cipher_char] = plain_char
+
         
-        plaintext = decode(cypher_text[0], mapping)
+        plaintext = decode(cipher_text[0], dict(mapping, **tmp_mapping))
 
-        ### checking
-        if check_syntax(plaintext):
+        
+        if check_syntax(plaintext, 3):
+            print(str(f_p))
             print(plaintext)
-            print(mapping)
+        
 
+    """
+        for s_p in itertools.permutations("cumwfgypbvkjxqz",15):
+            ## compute mapping
+            for cipher_char, plain_char in zip(remain_map_key, f_p+s_p):
+                mapping[cipher_char] = plain_char
+        
+            plaintext = decode(cipher_text[0], mapping)
+
+            ### checking
+            if check_syntax(plaintext):
+                print(plaintext)
+                print(mapping)
+
+            print(len(cipher_text[0]))
+            print([char for char in cipher_text[0] if char in second_group_map])
+            sys.exit(1)
+    """
+
+if __name__ == "__main__":
+    cipher = "creditriskevaluationisgettingimportantsincetheglob"
+    print(len(cipher))
+    if check_syntax(cipher,3):
+        print("yes")
